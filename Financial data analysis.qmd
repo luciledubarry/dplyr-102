@@ -1,0 +1,23 @@
+---
+title: "Financial data analysis"
+author: "Lucile Dubarry"
+format: html
+---
+
+```{r}
+#| message: false
+here::i_am("dplyr-102.Rproj")
+library(here)
+library(tidyr)
+library(dplyr)
+library(vroom)
+library(ggplot2)
+```
+
+## Data loading
+```{r}
+clients <- vroom(here("data", "client.csv"))
+disp <- vroom(here("data", "disp.csv"))
+accounts <- vroom(here("data", "account.csv"))
+```
+
