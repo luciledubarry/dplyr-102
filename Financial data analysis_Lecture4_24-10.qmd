@@ -1,0 +1,230 @@
+---
+title: "Financial data analysis"
+author: "Lucile Dubarry"
+format: html
+---
+
+```{r}
+#| message: false
+here::i_am("dplyr-102.Rproj")
+library(here)
+library(tidyr)
+library(dplyr)
+library(vroom)
+library(ggplot2)
+library(patchwork)
+```
+
+How to copy a complete repository from someone on Github ? 
+choose a repository and fork it (top right)
+
+data base = collection of uniform spreadsheets with multiple relationships between each table. Each entity (= spreadsheet) is associated to at least one another entity.
+
+Some entities are only in charge of relating entities to each other. 
+
+Association between entities based on keys. How to link tables: 
+- primary keys: unique key which identifies the table, ex: id_client is used to identify clients among tables
+- foreign key: referencing another table's key
+- use an external table that describes all relationships between tables
+-> objective: try to slip information into minimistic table
+
+In this organization, we can create more easily new information. And it reduces the risk of inconsistency = reduce redundancies between tables
+
+## Data loading
+```{r}
+#| message: false
+clients <- vroom(here("data", "client.csv"))
+disp <- vroom(here("data", "disp.csv"))
+accounts <- vroom(here("data","account.csv"))
+```
+upload data with vroom function: 
+- vroom("data/sub-directory")
+- vroom(here("data","sub-directory"))
+
+## Joining data tables
+A collection of joining functions of the form `*_join` = allows to merge tables in a way that reduces redundancies and allows to study tables.
+
+### Inner join
+```{r}
+#| message: false
+da <- inner_join(accounts, disp)
+```
+If we obtain an incoherent number of rows, there could a problem with delimitation, must use the delim function = create delimited tables. 
+
+```{r}
+cda <- inner_join(clients, da, by = join_by(client_id), suffix = c("_home", "_bank"))
+```
+join function = operates the join over columns with the same name/variable (1 or more), can only join 2 tables together. 
+
+We may miss some information with the joining. 
+can specify with each variable(s) to make the joining
+
+make the joining over client_id, would create 2 variables id_district (because are in common in both tables)
+
+suffix function = differentiate name of common variables between 2 tables
+
+### Bank district VS home district
+```{r}
+home_diff_bank <- 
+  cda |> filter(district_id_home != district_id_bank) |> nrow()
+```
+We observe that `r home_diff_bank` clients have a bank in another district than the one they live in 
+
+```{r}
+cda |> 
+  group_by(account_id) |>
+  distinct(district_id_home) |>
+  summarise(N=n()) |>
+  filter(N>1)
+```
+distinct = group aware
+displays number of distinct values in each group of account_id
+
+Distinct(district_id_home) allows to separate the shared accounts and the share account in another district (than the bank district). 
+
+The result means there is no family with which members live in another district than the district of their bank account. 
+
+### Gender gap?
+```{r}
+clients |> count(gender)
+```
+```{r}
+clients |>
+  ggplot(aes(y=gender)) + ## better to put high count on y-axis
+  geom_bar() + 
+  coord_flip()
+```
+No gender imbalance in accounts owner in the sample
+
+```{r}
+cda |>
+  count(gender, type) |>
+  group_by(gender) |>
+  mutate(freq=n/sum(n)) |>
+  select(-n) |>
+  ungroup() |>
+  pivot_wider(values_from = freq, names_from = type)
+```
+```{r}
+cda |>
+  ggplot(aes(y=gender, fill=type)) +
+  geom_bar()
+```
+```{r}
+chisq.test(cda |> pull(gender),
+           cda |> pull(type))
+```
+conclusion: independent from gender
+
+objective of the data set: analyze loans and probability of having problems relating to loans
+
+```{r}
+#| message: false
+loan <- vroom(here("data", "loan.csv"))
+```
+
+modify classes of some variable:
+- status modified as factor: level specified
+- id variables modified as integer
+```{r}
+loand <- loan |>
+  mutate(status = factor(status, levels=c("A", "B", "C", "D")),
+         loan_id = as.integer(loan_id),
+         account_id = as.integer(account_id))
+```
+
+Factor recoding of `status` introduced `r loan |> filter(is.na(status)) |> nrow()` error. 
+
+```{r}
+loan_counts <- ggplot(loan, aes(x=status)) +
+  geom_bar()
+loan_counts
+```
+
+Compute lost ratio: amount of loans lost for the bank compared to total amount of loans
+
+Aggregate amount of loans per group:
+```{r}
+loan |> 
+  group_by(status) |>
+  summarise(sum(amount))
+```
+
+Distribution of loans conditional on status:
+```{r}
+ggplot(loan, aes(x=status, y=amount)) +
+  geom_boxplot()
+```
+
+Display in graph aggregate amount of loans per group:
+```{r}
+loan_amounts <- loan |>
+  group_by(status) |>
+  summarise("total amount" = sum(amount)) |>
+  ggplot(aes(x=status, y = `total amount`)) +
+  geom_col()
+loan_amounts
+```
+must use `` in ggplot for computed variables
+
+to use patchwork, must store each graph chosen as a variable
+Patchwork:
+```{r}
+loan_counts + loan_amounts
+```
+
+Comparaison in distribution of loans per group depending on number of loans and depending on amount of loans
+```{r}
+(loan_counts + coord_flip()) / (loan_amounts + coord_flip())
+```
+
+Filter selected columns for graphical representations with %in%:
+```{r}
+(loan |> filter(status %in% c("A", "B")) |>
+  ggplot(aes(x=status)) +
+  geom_bar()) + 
+  (loan |> filter(status %in% c("C", "D")) |>
+  ggplot(aes(x=status)) +
+  geom_bar())
+```
+allows to have a more integrated point of view on the data
+
+Past loans (A and B) versus current loans (C and D): 
+
+mutate the data set to differentiate past and current loans:
+1st solution: if else (condition, TRUE, FALSE)
+```{r}
+loan <- loan |>
+  mutate(active= if_else(status %in% c("A", "B"), "Past", "Active"))
+```
+
+```{r}
+ggplot(loan, aes(x=status)) + 
+  geom_bar() + 
+  facet_wrap(~active)
+```
+same scale for both graphs: we want different scales in the facet
+
+```{r}
+ggplot(loan, aes(x=status)) + 
+  geom_bar() + 
+  facet_wrap(~active, scale="free")
+```
+
+Conditional distribution of loans depending on active variable 
+```{r}
+ggplot(loan, aes(y=active, fill=status)) +
+  geom_bar(position="fill")
+```
+
+Create variable default from unfinished loans:
+```{r}
+loan <- loan |>
+  mutate(default = status %in% c("B", "D"))
+```
+
+Conditional distribution of loans depending on default variable 
+```{r}
+ggplot(loan, aes(y=active, fill=default)) +
+  geom_bar(position="fill")
+```
